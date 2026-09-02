@@ -10,6 +10,7 @@ export async function GET() {
   if (!session || !token) {
     return NextResponse.json({ error: "You are not logged in." }, { status: 401 });
   }
+  war.heartbeat(token);
   return NextResponse.json(war.snapshot(token));
 }
 

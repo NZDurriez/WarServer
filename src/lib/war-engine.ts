@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { buildTiles, inProtectionZone, isWall, MAP_H, MAP_W, spawnFor } from "./map";
 import { CHARACTER_BY_ID, GOD_ACCOUNT, ROSTER, SHARED_ACCOUNT } from "./roster";
 import type { Actor, Dir, Role, RosterEntry, WarSnapshot } from "./types";
@@ -5,6 +7,7 @@ import type { Actor, Dir, Role, RosterEntry, WarSnapshot } from "./types";
 const LOCK_TIMEOUT_MS = 25_000;
 const WALK_MS = 180;
 const DUMMY_HP = 900;
+const STATE_FILE = join(process.cwd(), ".data", "war-state.json");
 
 type Session = {
   id: string;
@@ -75,17 +78,59 @@ class WarEngine {
   frags = { antica: 0, amera: 0 };
   lastMessages = new Map<string, string>();
 
+  private hydrate() {
+    try {
+      const data = JSON.parse(readFileSync(STATE_FILE, "utf8")) as {
+        sessions: Session[];
+        locks: [string, { sessionId: string; lastSeen: number }][];
+        bodies: Body[];
+        dummies: Dummy[];
+        log: string[];
+        frags: { antica: number; amera: number };
+        lastMessages: [string, string][];
+      };
+      this.sessions = new Map(data.sessions.map((s) => [s.id, s]));
+      this.locks = new Map(data.locks);
+      this.bodies = new Map(data.bodies.map((b) => [b.characterId, b]));
+      this.dummies = data.dummies;
+      this.log = data.log;
+      this.frags = data.frags;
+      this.lastMessages = new Map(data.lastMessages);
+    } catch {
+      // first run
+    }
+  }
+
+  private persist() {
+    mkdirSync(dirname(STATE_FILE), { recursive: true });
+    writeFileSync(
+      STATE_FILE,
+      JSON.stringify({
+        sessions: [...this.sessions.values()],
+        locks: [...this.locks.entries()],
+        bodies: [...this.bodies.values()],
+        dummies: this.dummies,
+        log: this.log,
+        frags: this.frags,
+        lastMessages: [...this.lastMessages.entries()],
+      }),
+    );
+  }
+
   login(account: string, password: string): { token: string; role: Role } | { error: string } {
+    this.hydrate();
     const a = account.trim();
     const p = password;
     if (a === SHARED_ACCOUNT.account && p === SHARED_ACCOUNT.password) {
       const id = rid();
       this.sessions.set(id, { id, role: "player", characterId: null, createdAt: Date.now() });
+      this.persist();
       return { token: id, role: "player" };
     }
     if (a === GOD_ACCOUNT.account && p === GOD_ACCOUNT.password) {
       const id = rid();
       this.sessions.set(id, { id, role: "god", characterId: null, createdAt: Date.now() });
+      this.persist();
       return { token: id, role: "god" };
     }
     return { error: "Account number or password is not correct." };
@@ -93,11 +138,13 @@ class WarEngine {
 
   session(token: string | undefined | null): Session | null {
     if (!token) return null;
+    this.hydrate();
     this.expireLocks();
     return this.sessions.get(token) ?? null;
   }
 
   roster(token: string | null): RosterEntry[] {
+    this.hydrate();
     this.expireLocks();
     return ROSTER.map((c) => {
       const lock = this.locks.get(c.id);
@@ -110,6 +157,7 @@ class WarEngine {
   }
 
   claim(token: string, characterId: string): { ok: true } | { error: string } {
+    this.hydrate();
     this.expireLocks();
     const session = this.sessions.get(token);
     if (!session) return { error: "You are not logged in." };
@@ -145,41 +193,53 @@ class WarEngine {
     });
     this.pushLog(`${character.name} entered the war.`);
     this.lastMessages.set(token, `${character.name} is ready. You are pre-equipped.`);
+    this.persist();
     return { ok: true };
   }
 
   release(token: string) {
+    this.hydrate();
     const session = this.sessions.get(token);
     if (!session?.characterId) return;
     this.releaseCharacter(session.characterId, token);
     session.characterId = null;
+    this.persist();
   }
 
   heartbeat(token: string) {
+    this.hydrate();
     const session = this.sessions.get(token);
     if (!session?.characterId) return;
     const lock = this.locks.get(session.characterId);
-    if (lock && lock.sessionId === token) lock.lastSeen = Date.now();
+    if (lock && lock.sessionId === token) {
+      lock.lastSeen = Date.now();
+      this.persist();
+    }
   }
 
   unlock(token: string, characterId: string): { ok: true } | { error: string } {
+    this.hydrate();
     const session = this.sessions.get(token);
     if (!session || session.role !== "god") return { error: "Only a gamemaster can do that." };
     const lock = this.locks.get(characterId);
     if (!lock) return { ok: true };
     this.releaseCharacter(characterId, lock.sessionId);
+    this.persist();
     return { ok: true };
   }
 
   resetFrags(token: string): { ok: true } | { error: string } {
+    this.hydrate();
     const session = this.sessions.get(token);
     if (!session || session.role !== "god") return { error: "Only a gamemaster can do that." };
     this.frags = { antica: 0, amera: 0 };
     this.pushLog("Gamemaster reset the frag count.");
+    this.persist();
     return { ok: true };
   }
 
   snapshot(token: string): WarSnapshot {
+    this.hydrate();
     this.expireLocks();
     this.respawnDummies();
     const session = this.sessions.get(token);
@@ -223,6 +283,7 @@ class WarEngine {
     token: string,
     action: { type: "move"; dir: Dir } | { type: "attack" } | { type: "skill"; skill: "sd" | "heal" },
   ): { ok: true } | { error: string } {
+    this.hydrate();
     this.expireLocks();
     const session = this.sessions.get(token);
     if (!session?.characterId) return { error: "You have not entered a character." };
@@ -232,10 +293,13 @@ class WarEngine {
     const lock = this.locks.get(session.characterId);
     if (lock) lock.lastSeen = Date.now();
 
-    if (action.type === "move") return this.move(body, action.dir);
-    if (action.type === "attack") return this.attack(body, character.vocation, false);
-    if (action.skill === "heal") return this.heal(body, character.vocation);
-    return this.attack(body, character.vocation, true);
+    let result: { ok: true } | { error: string };
+    if (action.type === "move") result = this.move(body, action.dir);
+    else if (action.type === "attack") result = this.attack(body, character.vocation, false);
+    else if (action.skill === "heal") result = this.heal(body, character.vocation);
+    else result = this.attack(body, character.vocation, true);
+    this.persist();
+    return result;
   }
 
   private move(body: Body, dir: Dir): { ok: true } | { error: string } {
@@ -411,11 +475,14 @@ class WarEngine {
 
   private expireLocks() {
     const now = Date.now();
+    let changed = false;
     for (const [characterId, lock] of this.locks) {
       if (now - lock.lastSeen > LOCK_TIMEOUT_MS) {
         this.releaseCharacter(characterId, lock.sessionId);
+        changed = true;
       }
     }
+    if (changed) this.persist();
   }
 
   private respawnDummies() {

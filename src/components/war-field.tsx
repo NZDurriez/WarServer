@@ -16,12 +16,12 @@ const TILE_COLORS: Record<number, [string, string]> = {
   [TILE.water]: ["#1d4a68", "#163a54"],
 };
 
-export function WarField() {
+export function WarField({ initial }: { initial: WarSnapshot }) {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [state, setState] = useState<WarSnapshot | null>(null);
+  const [state, setState] = useState<WarSnapshot>(initial);
   const [error, setError] = useState<string | null>(null);
-  const [flash, setFlash] = useState<string | null>(null);
+  const [flash, setFlash] = useState<string | null>(initial.message);
 
   const apply = useCallback((next: WarSnapshot) => {
     setState(next);
@@ -39,10 +39,7 @@ export function WarField() {
       setError(json.error ?? "The war field could not be loaded.");
       return;
     }
-    if (!json.you) {
-      router.push("/characters");
-      return;
-    }
+    if (!json.you) return;
     apply(json);
   }, [apply, router]);
 
@@ -147,15 +144,14 @@ export function WarField() {
     );
   }
 
-  if (!state?.you) {
+  const you = state.you;
+  if (!you) {
     return (
       <div className="gold-panel rounded-sm p-8 text-center text-muted-foreground">
         Entering the field...
       </div>
     );
   }
-
-  const you = state.you;
   const hpPct = Math.round((you.hp / you.hpMax) * 100);
   const manaPct = Math.round((you.mana / you.manaMax) * 100);
 

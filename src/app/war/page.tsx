@@ -10,11 +10,12 @@ export default async function WarPage() {
   const token = await getToken();
   const session = war.session(token);
   if (!session || !token) redirect("/");
-  if (!session.characterId) redirect("/characters");
+  const initial = war.snapshot(token);
+  if (!initial.you) redirect("/characters");
 
   return (
     <SiteFrame eyebrow="West temple Antica. East temple Amera. Gate in the middle.">
-      <WarField />
+      <WarField initial={initial} />
     </SiteFrame>
   );
 }
