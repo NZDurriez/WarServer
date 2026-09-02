@@ -1,6 +1,15 @@
 # World War — Antica vs Amera
 
+Repo: [github.com/NZDurriez/WarServer](https://github.com/NZDurriez/WarServer)
+
 Old Open Tibia war servers were not a different engine. They were a normal OT server with a **shared account**, a **pre-made character list**, and a **login script that kits you**. This repo is that setup: a browser desk so you can use the roster immediately, plus a drop-in overlay for The Forgotten Server 8.60.
+
+```bash
+git clone https://github.com/NZDurriez/WarServer.git
+cd WarServer
+npm install
+npm run dev
+```
 
 ## What you remember, mapped to real settings
 
