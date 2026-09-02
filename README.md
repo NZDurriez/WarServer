@@ -25,12 +25,7 @@ replaceKickOnLogin = false          -- a second login does not kick the first
 
 If `replaceKickOnLogin` stays true (TFS default), the next person to pick that name steals the body. That is the opposite of those old war lists.
 
-## Try the roster here
-
-```bash
-npm install
-npm run dev
-```
+## Try the roster
 
 Open [http://127.0.0.1:43141](http://127.0.0.1:43141). Account `1` / `1`. Pick a free name. Open a second browser window to see a taken character refuse you.
 

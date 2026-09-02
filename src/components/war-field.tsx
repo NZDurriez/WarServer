@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { TILE } from "@/lib/types";
 import type { Dir, WarSnapshot } from "@/lib/types";
+import { releaseAction } from "@/app/actions";
 
 const TILE_COLORS: Record<number, [string, string]> = {
   [TILE.grass]: ["#3f6b2c", "#355c26"],
@@ -135,11 +136,6 @@ export function WarField() {
     }
   }, [state]);
 
-  async function leave() {
-    await fetch("/api/release", { method: "POST" });
-    router.push("/characters");
-  }
-
   if (error) {
     return (
       <div className="gold-panel rounded-sm p-6 text-center">
@@ -240,9 +236,11 @@ export function WarField() {
             <li key={`${i}-${line}`}>{line}</li>
           ))}
         </ul>
-        <Button variant="outline" className="w-full rounded-sm" onClick={leave}>
-          Logout character
-        </Button>
+        <form action={releaseAction}>
+          <Button type="submit" variant="outline" className="w-full rounded-sm">
+            Logout character
+          </Button>
+        </form>
       </aside>
     </div>
   );

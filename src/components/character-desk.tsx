@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
+import { claimAction, logoutAction } from "@/app/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,85 +14,43 @@ import {
 import type { RosterEntry, Team } from "@/lib/types";
 import { Paperdoll } from "@/components/paperdoll";
 
-type Payload = {
+export type RosterPayload = {
   role: "player" | "god";
   characterId: string | null;
   roster: RosterEntry[];
   frags: { antica: number; amera: number };
 };
 
-export function CharacterDesk() {
-  const router = useRouter();
-  const [data, setData] = useState<Payload | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+export function CharacterDesk({ initial }: { initial: RosterPayload }) {
+  const [data, setData] = useState(initial);
+  const [selected, setSelected] = useState<string | null>(
+    initial.characterId ?? initial.roster.find((c) => !c.taken)?.id ?? initial.roster[0]?.id ?? null,
+  );
+  const [claimState, claimFormAction, claimPending] = useActionState(claimAction, null);
   const [dialog, setDialog] = useState<string | null>(null);
 
-  async function load() {
-    const res = await fetch("/api/roster", { cache: "no-store" });
-    if (res.status === 401) {
-      router.push("/");
-      return;
-    }
-    if (!res.ok) {
-      setError("Could not load the character list.");
-      return;
-    }
-    const json = (await res.json()) as Payload;
-    setData(json);
-    setSelected((current) => current ?? json.characterId ?? json.roster.find((c) => !c.taken)?.id ?? json.roster[0]?.id ?? null);
-  }
+  useEffect(() => {
+    if (!claimState?.error) return;
+    const t = setTimeout(() => setDialog(claimState.error), 0);
+    return () => clearTimeout(t);
+  }, [claimState]);
 
   useEffect(() => {
-    const boot = setTimeout(() => {
-      load().catch(() => setError("Could not load the character list."));
-    }, 0);
     const id = setInterval(() => {
-      load().catch(() => undefined);
+      fetch("/api/roster", { cache: "no-store" })
+        .then(async (res) => {
+          if (!res.ok) return;
+          setData((await res.json()) as RosterPayload);
+        })
+        .catch(() => undefined);
     }, 1500);
-    return () => {
-      clearTimeout(boot);
-      clearInterval(id);
-    };
-    // The roster poll is intentionally mounted once per visit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => clearInterval(id);
   }, []);
 
   const selectedChar = useMemo(
-    () => data?.roster.find((c) => c.id === selected) ?? null,
+    () => data.roster.find((c) => c.id === selected) ?? null,
     [data, selected],
   );
-
-  async function enter() {
-    if (!selectedChar) return;
-    if (selectedChar.taken && !selectedChar.takenByYou) {
-      setDialog("A player is already logged in on this character.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await fetch("/api/claim", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ characterId: selectedChar.id }),
-      });
-      const json = (await res.json()) as { error?: string };
-      if (!res.ok) {
-        setDialog(json.error ?? "Could not enter with that character.");
-        await load();
-        return;
-      }
-      router.push("/war");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function logout() {
-    await fetch("/api/logout", { method: "POST" });
-    router.push("/");
-  }
 
   async function unlock(id: string) {
     await fetch("/api/gm", {
@@ -100,26 +58,8 @@ export function CharacterDesk() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ characterId: id }),
     });
-    await load();
-  }
-
-  if (error) {
-    return (
-      <div className="gold-panel rounded-sm p-6 text-center">
-        <p>{error}</p>
-        <Button className="mt-4 rounded-sm" onClick={() => router.push("/")}>
-          Back to login
-        </Button>
-      </div>
-    );
-  }
-
-  if (!data) {
-    return (
-      <div className="gold-panel rounded-sm p-8 text-center text-muted-foreground">
-        Loading character list...
-      </div>
-    );
+    const res = await fetch("/api/roster", { cache: "no-store" });
+    if (res.ok) setData((await res.json()) as RosterPayload);
   }
 
   return (
@@ -157,12 +97,17 @@ export function CharacterDesk() {
           />
         </div>
         <div className="mt-4 flex flex-wrap justify-end gap-2">
-          <Button variant="outline" className="rounded-sm" onClick={logout}>
-            Logout
-          </Button>
-          <Button className="rounded-sm" disabled={busy || !selectedChar} onClick={enter}>
-            {busy ? "Entering..." : "Ok"}
-          </Button>
+          <form action={logoutAction}>
+            <Button type="submit" variant="outline" className="rounded-sm">
+              Logout
+            </Button>
+          </form>
+          <form action={claimFormAction}>
+            <input type="hidden" name="characterId" value={selected ?? ""} />
+            <Button type="submit" className="rounded-sm" disabled={claimPending || !selected}>
+              {claimPending ? "Entering..." : "Ok"}
+            </Button>
+          </form>
         </div>
       </div>
       <aside className="gold-panel rounded-sm p-4">
