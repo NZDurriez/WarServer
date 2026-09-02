@@ -1,0 +1,18 @@
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: war
+      MYSQL_DATABASE: tfs
+      MYSQL_USER: tfs
+      MYSQL_PASSWORD: war
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./server/sql:/docker-entrypoint-initdb.d
+      - war-db:/var/lib/mysql
+    command: --character-set-server=utf8 --collation-server=utf8_general_ci
+
+volumes:
+  war-db:
