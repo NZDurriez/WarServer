@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 import { TILE } from "@/lib/types";
 import type { Dir, WarSnapshot } from "@/lib/types";
 import { releaseAction } from "@/app/actions";
+import { buildTiles, MAP_H, MAP_W } from "@/lib/map";
+
+const MAP_TILES = buildTiles();
 
 const TILE_COLORS: Record<number, [string, string]> = {
   [TILE.grass]: ["#3f6b2c", "#355c26"],
@@ -31,17 +34,12 @@ export function WarField({ initial }: { initial: WarSnapshot }) {
   const load = useCallback(async () => {
     const res = await fetch("/api/war", { cache: "no-store" });
     if (res.status === 401) {
-      router.push("/");
       return;
     }
     const json = (await res.json()) as WarSnapshot & { error?: string };
-    if (!res.ok) {
-      setError(json.error ?? "The war field could not be loaded.");
-      return;
-    }
-    if (!json.you) return;
+    if (!res.ok || !json.you) return;
     apply(json);
-  }, [apply, router]);
+  }, [apply]);
 
   async function act(payload: { type: "move"; dir: Dir } | { type: "attack" } | { type: "skill"; skill: "sd" | "heal" }) {
     const res = await fetch("/api/war", {
@@ -60,7 +58,7 @@ export function WarField({ initial }: { initial: WarSnapshot }) {
     }, 0);
     const poll = setInterval(() => {
       load().catch(() => undefined);
-    }, 220);
+    }, 500);
     const beat = setInterval(() => {
       fetch("/api/heartbeat", { method: "POST" }).catch(() => undefined);
     }, 5000);
@@ -93,17 +91,18 @@ export function WarField({ initial }: { initial: WarSnapshot }) {
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !state) return;
+    if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-        const size = Math.max(10, Math.floor(Math.min(canvas.clientWidth / state.width, 22)));
-    canvas.width = size * state.width;
-    canvas.height = size * state.height;
+    const parentWidth = canvas.parentElement?.clientWidth || 640;
+    const size = Math.max(12, Math.floor(Math.min(parentWidth / MAP_W, 22)));
+    canvas.width = size * MAP_W;
+    canvas.height = size * MAP_H;
     ctx.imageSmoothingEnabled = false;
 
-    for (let y = 0; y < state.height; y++) {
-      for (let x = 0; x < state.width; x++) {
-        const kind = state.tiles[y][x];
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        const kind = MAP_TILES[y][x];
         const pair = TILE_COLORS[kind] ?? TILE_COLORS[TILE.grass];
         ctx.fillStyle = (x + y) % 2 === 0 ? pair[0] : pair[1];
         ctx.fillRect(x * size, y * size, size, size);
@@ -169,7 +168,11 @@ export function WarField({ initial }: { initial: WarSnapshot }) {
           </div>
         </div>
         <div className="overflow-auto rounded-sm border border-[#6b4e22] bg-black">
-          <canvas ref={canvasRef} className="mx-auto block h-auto w-full max-w-full" style={{ imageRendering: "pixelated" }} />
+          <canvas
+            ref={canvasRef}
+            className="mx-auto block w-full"
+            style={{ imageRendering: "pixelated", minHeight: 280 }}
+          />
         </div>
         {flash ? <p className="mt-2 text-sm text-primary">{flash}</p> : null}
         <div className="mt-3 grid grid-cols-3 gap-2 sm:hidden">

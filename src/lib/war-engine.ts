@@ -1,13 +1,13 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { buildTiles, inProtectionZone, isWall, MAP_H, MAP_W, spawnFor } from "./map";
 import { CHARACTER_BY_ID, GOD_ACCOUNT, ROSTER, SHARED_ACCOUNT } from "./roster";
 import type { Actor, Dir, Role, RosterEntry, WarSnapshot } from "./types";
 
-const LOCK_TIMEOUT_MS = 25_000;
+const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 const WALK_MS = 180;
 const DUMMY_HP = 900;
-const STATE_FILE = join(process.cwd(), ".data", "war-state.json");
+const STATE_FILE = join("/tmp", "world-war-state.json");
 
 type Session = {
   id: string;
@@ -103,8 +103,9 @@ class WarEngine {
 
   private persist() {
     mkdirSync(dirname(STATE_FILE), { recursive: true });
+    const tmp = `${STATE_FILE}.tmp`;
     writeFileSync(
-      STATE_FILE,
+      tmp,
       JSON.stringify({
         sessions: [...this.sessions.values()],
         locks: [...this.locks.entries()],
@@ -115,6 +116,7 @@ class WarEngine {
         lastMessages: [...this.lastMessages.entries()],
       }),
     );
+    renameSync(tmp, STATE_FILE);
   }
 
   login(account: string, password: string): { token: string; role: Role } | { error: string } {
@@ -139,7 +141,7 @@ class WarEngine {
   session(token: string | undefined | null): Session | null {
     if (!token) return null;
     this.hydrate();
-    this.expireLocks();
+    this.restoreBody(token);
     return this.sessions.get(token) ?? null;
   }
 
@@ -208,6 +210,7 @@ class WarEngine {
 
   heartbeat(token: string) {
     this.hydrate();
+    this.restoreBody(token);
     const session = this.sessions.get(token);
     if (!session?.characterId) return;
     const lock = this.locks.get(session.characterId);
@@ -240,6 +243,7 @@ class WarEngine {
 
   snapshot(token: string): WarSnapshot {
     this.hydrate();
+    this.restoreBody(token);
     this.expireLocks();
     this.respawnDummies();
     const session = this.sessions.get(token);
@@ -284,6 +288,7 @@ class WarEngine {
     action: { type: "move"; dir: Dir } | { type: "attack" } | { type: "skill"; skill: "sd" | "heal" },
   ): { ok: true } | { error: string } {
     this.hydrate();
+    this.restoreBody(token);
     this.expireLocks();
     const session = this.sessions.get(token);
     if (!session?.characterId) return { error: "You have not entered a character." };
@@ -439,6 +444,34 @@ class WarEngine {
       if (dummy.x === x && dummy.y === y) return true;
     }
     return false;
+  }
+
+  private restoreBody(token: string) {
+    const session = this.sessions.get(token);
+    if (!session?.characterId) return;
+    const character = CHARACTER_BY_ID.get(session.characterId);
+    if (!character) return;
+    const lock = this.locks.get(session.characterId);
+    if (!lock || lock.sessionId === token) {
+      this.locks.set(session.characterId, { sessionId: token, lastSeen: Date.now() });
+    }
+    if (this.bodies.has(session.characterId)) return;
+    const spawn = spawnFor(character.team);
+    this.bodies.set(session.characterId, {
+      characterId: session.characterId,
+      sessionId: token,
+      x: spawn.x,
+      y: spawn.y,
+      hp: character.healthMax,
+      mana: character.manaMax,
+      facing: character.team === "antica" ? "e" : "w",
+      walkReady: 0,
+      skillReady: 0,
+      healReady: 0,
+      dummy: false,
+      respawnAt: 0,
+    });
+    this.persist();
   }
 
   private actorFromBody(body: Body | undefined): Actor | null {
